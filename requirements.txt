@@ -1,0 +1,4 @@
+PyQt6>=6.4.0
+Pillow>=9.3.0
+google-genai>=1.0.0
+python-dotenv>=1.0.0

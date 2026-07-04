@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>基于用户行为的个性化虚拟穿搭系统</title>
+    <!-- 引入 Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Axios 用于与 Flask 后端通信 -->
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <!-- 引入图标库 -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#4f46e5', // Indigo 600
+                        secondary: '#6366f1', // Indigo 500
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* 自定义滚动条 */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);
+        }
+        [v-cloak] { display: none; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans min-h-screen">
+    <div id="app" v-cloak class="min-h-screen">
+        
+        <!-- ========== 登录 / 注册 ========== -->
+        <div v-if="!loggedIn" class="min-h-screen flex items-center justify-center px-4 bg-gradient-to-br from-slate-100 via-indigo-50/40 to-slate-100">
+            <div class="w-full max-w-md glass-panel rounded-2xl p-8 shadow-xl border border-slate-200/80">
+                <div class="text-center mb-8">
+                    <div class="inline-flex w-14 h-14 rounded-xl bg-primary text-white items-center justify-center text-2xl shadow-lg mb-4">
+                        <i class="fa-solid fa-shirt"></i>
+                    </div>
+                    <h1 class="text-2xl font-bold text-slate-900">虚拟穿搭系统</h1>
+                    <p class="text-sm text-slate-500 mt-1">使用 JWT 登录，管理员与普通用户权限分离</p>
+                </div>
+                <div v-if="authError" class="mb-4 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{{ authError }}</div>
+                <form @submit.prevent="authMode === 'login' ? doLogin() : doRegister()" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-1">用户名</label>
+                        <input v-model="authUsername" type="text" class="w-full rounded-lg border border-slate-200 px-3 py-2.5 focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none" placeholder="demo 或 admin" autocomplete="username">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-600 mb-1">密码</label>
+                        <input v-model="authPassword" type="password" class="w-full rounded-lg border border-slate-200 px-3 py-2.5 focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none" placeholder="至少 6 位（注册时）" autocomplete="current-password">
+                    </div>
+                    <button type="submit" class="w-full py-3 rounded-xl bg-primary text-white font-semibold hover:bg-indigo-600 transition-colors shadow-md">
+                        {{ authMode === 'login' ? '登录' : '注册并登录' }}
+                    </button>
+                </form>
+                <p class="text-center text-sm text-slate-500 mt-6">
+                    <button type="button" @click="authMode = authMode === 'login' ? 'register' : 'login'; authError = ''" class="text-primary hover:underline">
+                        {{ authMode === 'login' ? '没有账号？注册' : '已有账号？去登录' }}
+                    </button>
+                </p>
+                <p class="text-xs text-slate-400 text-center mt-4">默认管理员：<code class="bg-slate-100 px-1 rounded">admin</code> / 见服务端 <code class="bg-slate-100 px-1 rounded">ADMIN_INITIAL_PASSWORD</code>（默认 admin123）</p>
+            </div>
+        </div>
+
+        <!-- ========== 主应用（登录后） ========== -->
+        <div v-else class="container mx-auto px-4 py-6 h-screen flex flex-col">
+        <!-- 顶部导航 -->
+        <header class="flex items-center justify-between mb-6 pb-4 border-b border-slate-200 flex-wrap gap-3">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-primary text-white flex items-center justify-center text-xl shadow-lg">
+                    <i class="fa-solid fa-shirt"></i>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-bold text-slate-900 tracking-tight">AI Virtual Try-On</h1>
+                    <p class="text-sm text-slate-500">基于用户行为的个性化虚拟穿搭系统</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 flex-wrap">
+                <span v-if="userRole === 'admin'" class="text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-1 rounded-full border border-amber-200">
+                    <i class="fa-solid fa-shield-halved mr-1"></i>管理员
+                </span>
+                <span v-else class="text-xs text-slate-500">用户：{{ displayName }}</span>
+                <button v-if="userRole === 'admin'" type="button" @click="openAdminUsers" class="text-sm text-primary hover:underline">
+                    <i class="fa-solid fa-users-gear mr-1"></i>用户管理
+                </button>
+                <button type="button" class="text-slate-500 hover:text-primary transition-colors text-sm" @click="openHistory"><i class="fa-solid fa-layer-group mr-2"></i>历史试穿</button>
+                <button type="button" class="text-slate-500 hover:text-primary transition-colors text-sm" @click="openWardrobe"><i class="fa-solid fa-bookmark mr-2"></i>我的衣柜</button>
+                <button type="button" @click="logout" class="text-sm text-red-600 hover:text-red-700 border border-red-200 rounded-lg px-3 py-1.5 hover:bg-red-50">退出登录</button>
+                <div class="w-10 h-10 rounded-full bg-slate-200 border-2 border-white shadow-sm overflow-hidden flex items-center justify-center text-slate-500 text-sm font-bold">
+                    {{ displayName.slice(0, 1).toUpperCase() }}
+                </div>
+            </div>
+        </header>
+
+        <!-- 主体内容 -->
+        <main class="flex-1 flex flex-col lg:flex-row gap-6 overflow-hidden pb-4">
+            
+            <!-- 左侧控制面板 -->
+            <aside class="w-full lg:w-[420px] flex flex-col gap-5 overflow-y-auto pr-2 rounded-2xl">
+                
+                <!-- 1. 图片上传区 -->
+                <div class="glass-panel rounded-2xl p-5 border border-slate-100">
+                    <h2 class="text-base font-semibold mb-4 flex items-center gap-2">
+                        <i class="fa-regular fa-images text-primary"></i> 影像数据采集
+                    </h2>
+                    <div class="grid grid-cols-2 gap-4">
+                        <!-- 人物图 -->
+                        <div class="flex flex-col gap-2">
+                            <label class="text-sm text-slate-600 font-medium">真人/模特照</label>
+                            <div class="relative group cursor-pointer border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 hover:bg-slate-100 hover:border-primary transition-all h-48 flex items-center justify-center overflow-hidden" @click="$refs.personInput.click()">
+                                <img v-if="personImgPreview" :src="personImgPreview" class="w-full h-full object-cover">
+                                <div v-else class="text-center p-4">
+                                    <i class="fa-solid fa-user text-3xl text-slate-300 mb-2"></i>
+                                    <p class="text-xs text-slate-400">点击上传全身照</p>
+                                </div>
+                            </div>
+                            <input type="file" ref="personInput" class="hidden" accept="image/*" @change="e => handleFileChange(e, 'person')">
+                        </div>
+                        
+                        <!-- 服装图 -->
+                        <div class="flex flex-col gap-2">
+                            <label class="text-sm text-slate-600 font-medium">目标服装</label>
+                            <div class="relative group cursor-pointer border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 hover:bg-slate-100 hover:border-primary transition-all h-48 flex items-center justify-center overflow-hidden" @click="$refs.clothingInput.click()">
+                                <img v-if="clothingImgPreview" :src="clothingImgPreview" class="w-full h-full object-contain p-1">
+                                <div v-else class="text-center p-4">
+                                    <i class="fa-solid fa-tshirt text-3xl text-slate-300 mb-2"></i>
+                                    <p class="text-xs text-slate-400">点击上传平铺图</p>
+                                </div>
+                            </div>
+                            <input type="file" ref="clothingInput" class="hidden" accept="image/*" @change="e => handleFileChange(e, 'clothing')">
+                            
+                            <!-- 自动抠图选项 (Rembg) -->
+                            <label class="flex items-center gap-2 text-xs text-slate-600 mt-1 cursor-pointer">
+                                <input type="checkbox" v-model="autoRmbg" class="rounded text-primary focus:ring-primary h-3 w-3">
+                                启用 AI 自动抠图 (Rembg)
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. 身体参数调节区 -->
+                <div class="glass-panel rounded-2xl p-5 border border-slate-100 bg-gradient-to-br from-slate-50 to-blue-50/30">
+                    <h2 class="text-base font-semibold mb-4 flex items-center gap-2">
+                        <i class="fa-solid fa-child-reaching text-primary"></i> 参数化人体建模
+                    </h2>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <div class="flex justify-between text-sm mb-1">
+                                <span class="text-slate-600">身高 (Height)</span>
+                                <span class="font-medium text-primary">{{ height }} cm</span>
+                            </div>
+                            <input type="range" v-model="height" min="140" max="220" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary">
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-sm mb-1">
+                                <span class="text-slate-600">胸围 (Chest)</span>
+                                <span class="font-medium text-primary">{{ chest }} cm</span>
+                            </div>
+                            <input type="range" v-model="chest" min="60" max="140" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary">
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-sm mb-1">
+                                <span class="text-slate-600">腰围 (Waist)</span>
+                                <span class="font-medium text-primary">{{ waist }} cm</span>
+                            </div>
+                            <input type="range" v-model="waist" min="50" max="120" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-primary">
+                        </div>
+                    </div>
+                    
+                    <!-- 智能推荐结果展示 -->
+                    <div class="mt-5 p-3 bg-emerald-50 border border-emerald-100 rounded-lg flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600">
+                            <i class="fa-solid fa-tag"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs text-emerald-600 font-medium mb-0.5">算法尺码预测</p>
+                            <p class="text-sm font-bold text-emerald-800">{{ sizeRecommendation }}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. 个性化推荐与偏好 -->
+                <div class="glass-panel rounded-2xl p-5 border border-slate-100">
+                    <h2 class="text-base font-semibold mb-3 flex items-center gap-2">
+                        <i class="fa-solid fa-wand-magic-sparkles text-primary"></i> 个性化协同与指令
+                    </h2>
+                    
+                    <div class="mb-3">
+                        <label class="text-xs text-slate-500 block mb-1">审美风格偏好 (协同过滤模拟)</label>
+                        <select v-model="stylePref" class="w-full border border-slate-200 rounded-lg p-2 text-sm bg-white focus:border-primary focus:ring-1 focus:ring-primary outline-none text-slate-700">
+                            <option value="基于历史行为推荐 (算法匹配优先)">基于历史行为推荐 (算法匹配优先)</option>
+                            <option value="日常休闲 (Casual)">日常休闲 (Casual)</option>
+                            <option value="商务通勤 (Business)">商务通勤 (Business)</option>
+                            <option value="街头潮流 (Streetwear)">街头潮流 (Streetwear)</option>
+                            <option value="国风复古 (Vintage)">国风复古 (Vintage)</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="text-xs text-slate-500 block mb-1">高级渲染指令 (Prompt)</label>
+                        <textarea v-model="promptText" rows="2" class="w-full border border-slate-200 rounded-lg p-2 text-sm bg-white focus:border-primary focus:ring-1 focus:ring-primary outline-none text-slate-700" placeholder="可输入对 AI 渲染的额外约束..."></textarea>
+                    </div>
+                </div>
+
+                <!-- 生成按钮 -->
+                <button @click="generateTryOn" :disabled="isGenerating || !personFile || !clothingFile" 
+                    class="w-full py-4 bg-gradient-to-r from-primary to-secondary text-white rounded-xl font-bold text-lg shadow-lg shadow-indigo-200 hover:shadow-indigo-300 transform hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none">
+                    <span v-if="!isGenerating"><i class="fa-solid fa-bolt mr-2"></i>开始智能云端试穿</span>
+                    <span v-else><i class="fa-solid fa-spinner fa-spin mr-2"></i>底层算法运算中...</span>
+                </button>
+            </aside>
+
+            <!-- 右侧结果面板 -->
+            <section class="flex-1 glass-panel rounded-2xl flex flex-col overflow-hidden border border-slate-100">
+                <div class="p-4 border-b border-slate-100 bg-white flex justify-between items-center z-10">
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-border-all text-primary"></i> 试衣效果矩阵生成
+                    </h2>
+                    <span v-if="isGenerating" class="text-xs bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full font-medium border border-indigo-100">
+                        <i class="fa-solid fa-satellite-dish animate-pulse mr-1"></i> 正在连接服务器算力节点
+                    </span>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+                    <!-- 网格展示区 2x3 -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                        
+                        <div v-for="(result, index) in results" :key="index" class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col group hover:shadow-md transition-shadow">
+                            
+                            <div class="p-3 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                                <span class="text-sm font-semibold text-slate-600">变体方案 #{{ index + 1 }}</span>
+                                <span v-if="result.status === 'success'" class="text-xs text-emerald-500 bg-emerald-50 px-2 py-0.5 rounded-full"><i class="fa-solid fa-check mr-1"></i>渲染完成</span>
+                            </div>
+
+                            <div class="h-72 bg-slate-100 flex items-center justify-center relative overflow-hidden">
+                                <!-- 状态：空闲 -->
+                                <div v-if="result.status === 'idle'" class="text-slate-400 flex flex-col items-center">
+                                    <i class="fa-regular fa-image text-4xl mb-2 opacity-50"></i>
+                                    <span class="text-sm">等待指令</span>
+                                </div>
+                                
+                                <!-- 状态：加载中 -->
+                                <div v-if="result.status === 'loading'" class="absolute inset-0 bg-white/80 flex flex-col items-center justify-center z-10 backdrop-blur-sm">
+                                    <div class="w-10 h-10 border-4 border-slate-200 border-t-primary rounded-full animate-spin mb-3"></div>
+                                    <span class="text-xs text-primary font-medium animate-pulse">大模型渲染映射中...</span>
+                                    <div class="w-3/4 bg-slate-200 h-1.5 rounded-full mt-3 overflow-hidden">
+                                        <div class="bg-primary h-full transition-all duration-300" :style="`width: ${result.progress}%`"></div>
+                                    </div>
+                                </div>
+
+                                <!-- 状态：完成 (显示图片) -->
+                                <img v-if="result.status === 'success'" :src="result.url" class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105">
+                                
+                                <!-- 状态：错误 -->
+                                <div v-if="result.status === 'error'" class="text-red-400 p-4 text-center">
+                                    <i class="fa-solid fa-triangle-exclamation text-3xl mb-2"></i>
+                                    <p class="text-xs">{{ result.error }}</p>
+                                </div>
+                            </div>
+
+                            <div class="p-3 bg-white">
+                                <button class="w-full py-2 text-sm font-medium rounded-lg transition-colors border disabled:opacity-50 disabled:cursor-not-allowed"
+                                    :class="result.savedToWardrobe ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-slate-600 bg-slate-50 hover:bg-indigo-50 hover:text-primary border-slate-200 hover:border-indigo-200'"
+                                    :disabled="result.status !== 'success' || result.savedToWardrobe" @click="saveToWardrobe(index)">
+                                    <i :class="result.savedToWardrobe ? 'fa-solid fa-check' : 'fa-regular fa-bookmark'" class="mr-1"></i>
+                                    {{ result.savedToWardrobe ? '已在衣柜中' : '保存至衣柜' }}
+                                </button>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </section>
+            
+        </main>
+
+        <!-- 历史试穿记录 -->
+        <div v-if="historyOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" @click.self="closeHistory">
+            <div class="bg-white rounded-2xl shadow-2xl max-w-5xl w-full max-h-[85vh] flex flex-col border border-slate-200">
+                <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                    <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-layer-group text-primary"></i> 历史试穿记录
+                    </h3>
+                    <button type="button" @click="closeHistory" class="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-slate-100">
+                        <i class="fa-solid fa-xmark text-xl"></i>
+                    </button>
+                </div>
+                <div class="flex-1 overflow-y-auto p-5">
+                    <div v-if="historyLoading" class="flex flex-col items-center justify-center py-16 text-slate-500">
+                        <i class="fa-solid fa-spinner fa-spin text-3xl mb-3 text-primary"></i>
+                        <span class="text-sm">加载中...</span>
+                    </div>
+                    <div v-else-if="!historyItems.length" class="text-center py-16 text-slate-400">
+                        <i class="fa-regular fa-images text-4xl mb-3 opacity-50"></i>
+                        <p class="text-sm">还没有试衣记录。完成一次云端试衣后会自动出现在这里。</p>
+                    </div>
+                    <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div v-for="row in historyItems" :key="row.id" class="rounded-xl border border-slate-200 bg-slate-50/80 overflow-hidden flex flex-col">
+                            <div class="relative h-40 bg-slate-100">
+                                <img :src="absStatic(row.result_url)" alt="试穿结果" class="w-full h-full object-cover">
+                                <span v-if="row.in_wardrobe" class="absolute top-2 right-2 text-[10px] font-semibold bg-emerald-500 text-white px-2 py-0.5 rounded-full">已在衣柜</span>
+                            </div>
+                            <div class="p-3 flex-1 flex flex-col gap-2 text-xs">
+                                <div class="flex gap-2">
+                                    <img :src="absStatic(row.person_url)" class="w-12 h-12 object-cover rounded-lg border border-slate-200" alt="">
+                                    <img :src="absStatic(row.clothing_url)" class="w-12 h-12 object-contain rounded-lg border border-slate-200 bg-white" alt="">
+                                </div>
+                                <p class="text-slate-600"><span class="font-medium text-slate-700">风格</span> {{ row.style }}</p>
+                                <p class="text-emerald-700 font-medium">{{ row.size_recommendation }}</p>
+                                <p class="text-slate-400">{{ row.date }}</p>
+                                <button v-if="!row.in_wardrobe" type="button" @click="addHistoryToWardrobe(row)" class="mt-auto text-xs text-primary border border-indigo-200 rounded-lg py-1.5 hover:bg-indigo-50">
+                                    <i class="fa-regular fa-bookmark mr-1"></i> 加入我的衣柜
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 管理员用户管理 -->
+        <div v-if="adminOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" @click.self="closeAdminUsers">
+            <div class="bg-white rounded-2xl shadow-2xl max-w-5xl w-full max-h-[85vh] flex flex-col border border-slate-200">
+                <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                    <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-users-gear text-primary"></i> 管理员用户管理
+                    </h3>
+                    <button type="button" @click="closeAdminUsers" class="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-slate-100">
+                        <i class="fa-solid fa-xmark text-xl"></i>
+                    </button>
+                </div>
+                <div class="flex items-center justify-between px-5 py-3 border-b border-slate-100 bg-white">
+                    <div class="flex items-center gap-2">
+                        <button type="button" @click="loadAdminUsers" class="text-sm text-primary hover:underline">
+                            <i class="fa-solid fa-rotate mr-2"></i>刷新
+                        </button>
+                        <span v-if="adminLoading" class="text-xs text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">加载中...</span>
+                    </div>
+                    <div class="text-xs text-slate-500">
+                        修改角色后，用户现有 JWT 中的 `role` 可能需要重新登录后才生效
+                    </div>
+                </div>
+                <div class="flex-1 overflow-y-auto p-5">
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                        <div class="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                            <p class="text-[11px] text-slate-500">用户总数</p>
+                            <p class="text-xl font-bold text-slate-800">{{ adminItems.length }}</p>
+                        </div>
+                        <div class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                            <p class="text-[11px] text-amber-700">管理员</p>
+                            <p class="text-xl font-bold text-amber-800">{{ adminItems.filter(u => u.role === 'admin').length }}</p>
+                        </div>
+                        <div class="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                            <p class="text-[11px] text-emerald-700">总试穿记录</p>
+                            <p class="text-xl font-bold text-emerald-800">{{ totalTryOnCount }}</p>
+                        </div>
+                    </div>
+                    <div class="mb-4">
+                        <input v-model="adminKeyword" type="text" placeholder="按用户名或ID搜索..." class="w-full sm:w-80 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none">
+                    </div>
+                    <div v-if="!filteredAdminItems.length && !adminLoading" class="text-center py-16 text-slate-400">
+                        <i class="fa-regular fa-user text-4xl mb-3 opacity-50 block"></i>
+                        暂无匹配用户
+                    </div>
+                    <div v-else class="overflow-x-auto">
+                        <table class="w-full text-left text-sm border border-slate-200 rounded-xl overflow-hidden">
+                            <thead class="bg-slate-50">
+                                <tr class="text-slate-600">
+                                    <th class="px-3 py-2 font-semibold">ID</th>
+                                    <th class="px-3 py-2 font-semibold">用户名</th>
+                                    <th class="px-3 py-2 font-semibold">角色</th>
+                                    <th class="px-3 py-2 font-semibold">试穿/衣柜</th>
+                                    <th class="px-3 py-2 font-semibold">最近试穿</th>
+                                    <th class="px-3 py-2 font-semibold">创建时间</th>
+                                    <th class="px-3 py-2 font-semibold">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="u in filteredAdminItems" :key="u.id" class="border-t border-slate-100">
+                                    <td class="px-3 py-2 text-slate-700">{{ u.id }}</td>
+                                    <td class="px-3 py-2 text-slate-700">{{ u.username }}</td>
+                                    <td class="px-3 py-2">
+                                        <span v-if="u.role === 'admin'" class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 border border-amber-200 text-amber-800">
+                                            <i class="fa-solid fa-shield-halved mr-1"></i>管理员
+                                        </span>
+                                        <span v-else class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 border border-slate-200 text-slate-600">
+                                            普通用户
+                                        </span>
+                                    </td>
+                                    <td class="px-3 py-2 text-slate-600">{{ u.record_count || 0 }} / {{ u.wardrobe_count || 0 }}</td>
+                                    <td class="px-3 py-2 text-slate-600">{{ u.last_tryon_at || '-' }}</td>
+                                    <td class="px-3 py-2 text-slate-600">{{ u.created_at }}</td>
+                                    <td class="px-3 py-2 flex flex-wrap gap-1">
+                                        <button
+                                            type="button"
+                                            @click="changeUserRole(u.id, u.role === 'admin' ? 'user' : 'admin')"
+                                            class="text-xs px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:border-indigo-200 text-slate-700 hover:text-primary">
+                                            {{ u.role === 'admin' ? '取消管理员' : '设为管理员' }}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            @click="resetUserPassword(u)"
+                                            class="text-xs px-2 py-1 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700">
+                                            重置密码
+                                        </button>
+                                        <button
+                                            type="button"
+                                            @click="deleteUser(u)"
+                                            class="text-xs px-2 py-1 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700">
+                                            删除用户
+                                        </button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 我的衣柜：收藏搭配列表 -->
+        <div v-if="wardrobeOpen" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm" @click.self="closeWardrobe">
+            <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[85vh] flex flex-col border border-slate-200">
+                <div class="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+                    <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-shirt text-primary"></i> 我的衣柜
+                    </h3>
+                    <button type="button" @click="closeWardrobe" class="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-slate-100">
+                        <i class="fa-solid fa-xmark text-xl"></i>
+                    </button>
+                </div>
+                <div class="flex-1 overflow-y-auto p-5">
+                    <div v-if="wardrobeLoading" class="flex flex-col items-center justify-center py-16 text-slate-500">
+                        <i class="fa-solid fa-spinner fa-spin text-3xl mb-3 text-primary"></i>
+                        <span class="text-sm">加载中...</span>
+                    </div>
+                    <div v-else-if="!wardrobeItems.length" class="text-center py-16 text-slate-400">
+                        <i class="fa-regular fa-folder-open text-4xl mb-3 opacity-50"></i>
+                        <p class="text-sm">暂无收藏。试衣成功后点击「保存至衣柜」即可加入。</p>
+                    </div>
+                    <div v-else class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div v-for="item in wardrobeItems" :key="item.id" class="rounded-xl border border-slate-200 bg-slate-50/80 overflow-hidden flex flex-col">
+                            <div class="relative h-44 bg-slate-100">
+                                <img :src="absStatic(item.result_url)" :alt="'搭配'" class="w-full h-full object-cover">
+                            </div>
+                            <div class="p-3 flex-1 flex flex-col gap-2 text-xs">
+                                <div class="flex gap-2">
+                                    <img :src="absStatic(item.person_url)" class="w-14 h-14 object-cover rounded-lg border border-slate-200" alt="">
+                                    <img :src="absStatic(item.clothing_url)" class="w-14 h-14 object-contain rounded-lg border border-slate-200 bg-white" alt="">
+                                </div>
+                                <p class="text-slate-600"><span class="font-medium text-slate-700">风格</span> {{ item.style }}</p>
+                                <p class="text-emerald-700 font-medium">{{ item.size_recommendation }}</p>
+                                <p class="text-slate-400">{{ item.date }}</p>
+                                <button type="button" @click="removeWardrobeItem(item.id)" class="mt-auto text-xs text-red-600 hover:text-red-700 border border-red-100 rounded-lg py-1.5 hover:bg-red-50">
+                                    <i class="fa-regular fa-trash-can mr-1"></i> 从衣柜移除
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        </div>
+    </div>
+
+    <!-- Vue 应用逻辑 -->
+    <script>
+        const { createApp, ref, computed, onMounted } = Vue;
+
+        createApp({
+            setup() {
+                // 与后端同源（请用浏览器打开 http://127.0.0.1:5000/ ，勿直接双击本地 index.html）
+                const BASE_URL = (() => {
+                    const p = window.location.protocol;
+                    if (p === 'file:' || !window.location.hostname) {
+                        return 'http://127.0.0.1:5000/api';
+                    }
+                    return `${window.location.origin}/api`;
+                })();
+
+                const formatAuthError = (e, fallback) => {
+                    if (e.code === 'ERR_NETWORK' || e.message === 'Network Error') {
+                        return '无法连接服务器：请先运行 python app.py，并访问 http://127.0.0.1:5000/ 打开本页（不要从本地文件夹双击 html）。';
+                    }
+                    const msg = e.response?.data?.error;
+                    if (msg) return msg;
+                    if (e.response?.status === 503) return e.response.data?.error || '数据库不可用';
+                    return fallback + (e.message ? `（${e.message}）` : '');
+                };
+
+                const TOKEN_KEY = 'virtual_tryon_jwt';
+
+                const loggedIn = ref(false);
+                const accessToken = ref('');
+                const userRole = ref('');
+                const displayName = ref('');
+                const userId = ref(null);
+                const authUsername = ref('');
+                const authPassword = ref('');
+                const authMode = ref('login');
+                const authError = ref('');
+
+                const applyAxiosAuth = () => {
+                    if (accessToken.value) {
+                        axios.defaults.headers.common['Authorization'] = 'Bearer ' + accessToken.value;
+                    } else {
+                        delete axios.defaults.headers.common['Authorization'];
+                    }
+                };
+
+                const logout = () => {
+                    accessToken.value = '';
+                    loggedIn.value = false;
+                    userRole.value = '';
+                    displayName.value = '';
+                    userId.value = null;
+                    localStorage.removeItem(TOKEN_KEY);
+                    applyAxiosAuth();
+                };
+
+                const bootstrapAuth = async () => {
+                    const t = localStorage.getItem(TOKEN_KEY);
+                    if (!t) return;
+                    accessToken.value = t;
+                    applyAxiosAuth();
+                    try {
+                        const { data } = await axios.get(`${BASE_URL}/auth/me`);
+                        userId.value = data.id;
+                        displayName.value = data.username;
+                        userRole.value = data.role;
+                        loggedIn.value = true;
+                    } catch (e) {
+                        logout();
+                    }
+                };
+
+                const doLogin = async () => {
+                    authError.value = '';
+                    try {
+                        const { data } = await axios.post(`${BASE_URL}/auth/login`, {
+                            username: authUsername.value.trim(),
+                            password: authPassword.value
+                        }, {
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                        accessToken.value = data.access_token;
+                        localStorage.setItem(TOKEN_KEY, data.access_token);
+                        applyAxiosAuth();
+                        userId.value = data.user.id;
+                        displayName.value = data.user.username;
+                        userRole.value = data.user.role;
+                        loggedIn.value = true;
+                        authPassword.value = '';
+                    } catch (e) {
+                        authError.value = formatAuthError(e, '登录失败');
+                    }
+                };
+
+                const doRegister = async () => {
+                    authError.value = '';
+                    try {
+                        const { data } = await axios.post(`${BASE_URL}/auth/register`, {
+                            username: authUsername.value.trim(),
+                            password: authPassword.value
+                        }, {
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                        accessToken.value = data.access_token;
+                        localStorage.setItem(TOKEN_KEY, data.access_token);
+                        applyAxiosAuth();
+                        userId.value = data.user.id;
+                        displayName.value = data.user.username;
+                        userRole.value = data.user.role;
+                        loggedIn.value = true;
+                        authPassword.value = '';
+                    } catch (e) {
+                        authError.value = formatAuthError(e, '注册失败');
+                    }
+                };
+
+                const wardrobeOpen = ref(false);
+                const wardrobeItems = ref([]);
+                const wardrobeLoading = ref(false);
+
+                const historyOpen = ref(false);
+                const historyItems = ref([]);
+                const historyLoading = ref(false);
+
+                // 管理员用户管理
+                const adminOpen = ref(false);
+                const adminItems = ref([]);
+                const adminLoading = ref(false);
+                const adminKeyword = ref('');
+
+                const filteredAdminItems = computed(() => {
+                    const kw = adminKeyword.value.trim().toLowerCase();
+                    if (!kw) return adminItems.value;
+                    return adminItems.value.filter((u) => {
+                        return String(u.id).includes(kw) || (u.username || '').toLowerCase().includes(kw);
+                    });
+                });
+
+                const totalTryOnCount = computed(() => {
+                    return adminItems.value.reduce((sum, u) => sum + (u.record_count || 0), 0);
+                });
+
+                const absStatic = (path) => {
+                    if (!path) return '';
+                    if (path.startsWith('http')) return path;
+                    return `${window.location.origin}${path}`;
+                };
+
+                const openWardrobe = async () => {
+                    if (!userId.value) return;
+                    wardrobeOpen.value = true;
+                    wardrobeLoading.value = true;
+                    wardrobeItems.value = [];
+                    try {
+                        const { data } = await axios.get(`${BASE_URL}/wardrobe`);
+                        wardrobeItems.value = data.items || [];
+                    } catch (e) {
+                        alert(e.response?.data?.error || formatAuthError(e, '加载失败'));
+                        wardrobeOpen.value = false;
+                    } finally {
+                        wardrobeLoading.value = false;
+                    }
+                };
+
+                const closeWardrobe = () => {
+                    wardrobeOpen.value = false;
+                };
+
+                const removeWardrobeItem = async (id) => {
+                    if (!confirm('确定从衣柜移除这条搭配吗？')) return;
+                    try {
+                        await axios.delete(`${BASE_URL}/wardrobe/${id}`);
+                        wardrobeItems.value = wardrobeItems.value.filter((x) => x.id !== id);
+                        const h = historyItems.value.find((x) => x.id === id);
+                        if (h) h.in_wardrobe = false;
+                    } catch (e) {
+                        alert(e.response?.data?.error || '移除失败');
+                    }
+                };
+
+                const openHistory = async () => {
+                    if (!userId.value) return;
+                    historyOpen.value = true;
+                    historyLoading.value = true;
+                    historyItems.value = [];
+                    try {
+                        const { data } = await axios.get(`${BASE_URL}/records/${userId.value}`);
+                        historyItems.value = data.records || [];
+                    } catch (e) {
+                        alert(e.response?.data?.error || formatAuthError(e, '加载失败'));
+                        historyOpen.value = false;
+                    } finally {
+                        historyLoading.value = false;
+                    }
+                };
+
+                const closeHistory = () => {
+                    historyOpen.value = false;
+                };
+
+                const addHistoryToWardrobe = async (row) => {
+                    if (!row?.id || row.in_wardrobe) return;
+                    try {
+                        await axios.post(`${BASE_URL}/wardrobe/add`, { record_id: row.id });
+                        row.in_wardrobe = true;
+                        alert('已加入我的衣柜');
+                    } catch (e) {
+                        alert(e.response?.data?.error || '加入失败');
+                    }
+                };
+
+                const openAdminUsers = async () => {
+                    if (!userRole.value || userRole.value !== 'admin') return;
+                    adminOpen.value = true;
+                    await loadAdminUsers();
+                };
+
+                const closeAdminUsers = () => {
+                    adminOpen.value = false;
+                };
+
+                const loadAdminUsers = async () => {
+                    if (!adminOpen.value) return;
+                    adminLoading.value = true;
+                    adminItems.value = [];
+                    try {
+                        const { data } = await axios.get(`${BASE_URL}/admin/users`);
+                        adminItems.value = data.users || [];
+                    } catch (e) {
+                        alert(e.response?.data?.error || '加载用户失败');
+                    } finally {
+                        adminLoading.value = false;
+                    }
+                };
+
+                const changeUserRole = async (targetUserId, nextRole) => {
+                    try {
+                        await axios.post(`${BASE_URL}/admin/users/${targetUserId}/role`, { role: nextRole });
+                        // 修改角色后：用户现有 JWT 中的 role 不一定立即生效，通常需要用户重新登录
+                        await loadAdminUsers();
+                    } catch (e) {
+                        alert(e.response?.data?.error || '修改失败');
+                    }
+                };
+
+                const resetUserPassword = async (u) => {
+                    const pwd = prompt(`请输入用户 ${u.username} 的新密码（至少6位）:`);
+                    if (pwd === null) return;
+                    const newPassword = String(pwd).trim();
+                    if (newPassword.length < 6) {
+                        alert('新密码至少 6 位');
+                        return;
+                    }
+                    try {
+                        await axios.post(`${BASE_URL}/admin/users/${u.id}/reset-password`, {
+                            new_password: newPassword
+                        });
+                        alert(`用户 ${u.username} 密码已重置`);
+                    } catch (e) {
+                        alert(e.response?.data?.error || '重置失败');
+                    }
+                };
+
+                const deleteUser = async (u) => {
+                    const ok = confirm(`确定删除用户 ${u.username} 吗？\n将同时删除该用户历史试穿记录。`);
+                    if (!ok) return;
+                    try {
+                        await axios.delete(`${BASE_URL}/admin/users/${u.id}`);
+                        await loadAdminUsers();
+                        alert(`用户 ${u.username} 已删除`);
+                    } catch (e) {
+                        alert(e.response?.data?.error || '删除失败');
+                    }
+                };
+
+                onMounted(() => {
+                    bootstrapAuth();
+                });
+
+                // 上传的图片状态
+                const personFile = ref(null);
+                const clothingFile = ref(null);
+                const personImgPreview = ref('');
+                const clothingImgPreview = ref('');
+                const autoRmbg = ref(true); // 默认开启抠图
+
+                // 身体参数
+                const height = ref(165);
+                const chest = ref(85);
+                const waist = ref(65);
+
+                // 偏好与提示词
+                const stylePref = ref('基于历史行为推荐 (算法匹配优先)');
+                const promptText = ref('Generate a high-quality virtual try-on image. Preserve facial features and pose.');
+
+                // 系统状态
+                const isGenerating = ref(false);
+                
+                // 结果矩阵数据 (6个卡片)
+                const results = ref(Array(6).fill().map(() => ({
+                    status: 'idle', // idle, loading, success, error
+                    progress: 0,
+                    url: '',
+                    error: '',
+                    recordId: null,
+                    savedToWardrobe: false
+                })));
+
+                // 核心：尺码智能推算逻辑 (对应论文中的尺寸测量与分析)
+                const sizeRecommendation = computed(() => {
+                    let size = "M";
+                    let fitStatus = "合身";
+                    
+                    if (chest.value < 80) size = "S";
+                    else if (chest.value < 90) size = "M";
+                    else if (chest.value < 100) size = "L";
+                    else if (chest.value < 110) size = "XL";
+                    else size = "XXL";
+
+                    if (waist.value < 65) fitStatus = "腰部微松，舒适";
+                    else if (waist.value < 80) fitStatus = "版型合身";
+                    else fitStatus = "建议选大一码以防紧绷";
+
+                    return `${size} 码 （${fitStatus}）`;
+                });
+
+                // 处理图片选择
+                const handleFileChange = (e, type) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+
+                    const previewUrl = URL.createObjectURL(file);
+                    if (type === 'person') {
+                        personFile.value = file;
+                        personImgPreview.value = previewUrl;
+                    } else {
+                        clothingFile.value = file;
+                        clothingImgPreview.value = previewUrl;
+                    }
+                };
+
+                // 执行生成 (联动后端 Flask API)
+                const generateTryOn = async () => {
+                    isGenerating.value = true;
+                    
+                    // 重置卡片状态
+                    results.value = results.value.map(r => ({
+                        status: 'loading', progress: 0, url: '', error: '', recordId: null, savedToWardrobe: false
+                    }));
+
+                    // ==========================================
+                    // 第一阶段：上传图片到 Flask 后端
+                    // ==========================================
+                    let uploadedPersonPath = '';
+                    let uploadedClothingPath = '';
+                    let useMockData = false;
+
+                    try {
+                        const formDataPerson = new FormData();
+                        formDataPerson.append('file', personFile.value);
+                        formDataPerson.append('type', 'person');
+                        
+                        const formDataClothing = new FormData();
+                        formDataClothing.append('file', clothingFile.value);
+                        formDataClothing.append('type', 'clothing');
+                        formDataClothing.append('auto_rmbg', autoRmbg.value);
+
+                        // 尝试连接后端 (默认 Flask 地址)
+                        const [resPerson, resClothing] = await Promise.all([
+                            axios.post(`${BASE_URL}/upload`, formDataPerson),
+                            axios.post(`${BASE_URL}/upload`, formDataClothing)
+                        ]);
+                        
+                        uploadedPersonPath = resPerson.data.file_path;
+                        uploadedClothingPath = resClothing.data.file_path;
+
+                    } catch (err) {
+                        console.warn("无法连接到 Flask 后端，系统将进入本地前端演示模式。", err);
+                        useMockData = true; // 后端未启动时，切换到前端演示模式
+                    }
+
+                    // ==========================================
+                    // 第二阶段：并行调用推理 API 或模拟演示
+                    // ==========================================
+                    for (let i = 0; i < results.value.length; i++) {
+                        // 启动一个异步任务更新进度条
+                        simulateProgress(i);
+
+                        setTimeout(async () => {
+                            try {
+                                if (useMockData) {
+                                    // 【演示模式】：如果在答辩时没有跑后端代码，这里会自动显示占位图
+                                    await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
+                                    // 模拟获取结果
+                                    results.value[i].url = `https://api.dicebear.com/7.x/identicon/svg?seed=Outfit${Date.now()}${i}`;
+                                    results.value[i].status = 'success';
+                                    results.value[i].progress = 100;
+                                } else {
+                                    // 【真实模式】：向 Flask 后端发送推理请求
+                                    const reqData = {
+                                        person_image_path: uploadedPersonPath,
+                                        clothing_image_path: uploadedClothingPath,
+                                        height: height.value,
+                                        chest: chest.value,
+                                        waist: waist.value,
+                                        style_preference: stylePref.value
+                                    };
+                                    const res = await axios.post(`${BASE_URL}/try-on`, reqData);
+                                    results.value[i].url = absStatic(res.data.result_url);
+                                    results.value[i].recordId = res.data.record_id ?? null;
+                                    results.value[i].status = 'success';
+                                    results.value[i].progress = 100;
+                                }
+                            } catch (e) {
+                                results.value[i].status = 'error';
+                                results.value[i].error = '算力节点连接超时或报错';
+                            }
+                            
+                            // 检查是否全部完成
+                            if (results.value.every(r => r.status === 'success' || r.status === 'error')) {
+                                isGenerating.value = false;
+                            }
+                        }, i * 1500); // 错开并发时间，防止 API 频率超限
+                    }
+                };
+
+                // 进度条模拟动画
+                const simulateProgress = (index) => {
+                    let p = 0;
+                    const interval = setInterval(() => {
+                        if (results.value[index].status !== 'loading') {
+                            clearInterval(interval);
+                            return;
+                        }
+                        p += Math.random() * 15;
+                        if (p > 90) p = 90; // 卡在90%等后端返回
+                        results.value[index].progress = p;
+                    }, 500);
+                };
+
+                const saveToWardrobe = async (index) => {
+                    const r = results.value[index];
+                    if (!r.recordId) {
+                        alert('无法保存：演示模式未连接后端，或试衣未返回记录编号。请通过服务器完成试衣后再保存。');
+                        return;
+                    }
+                    if (r.savedToWardrobe) return;
+                    try {
+                        await axios.post(`${BASE_URL}/wardrobe/add`, { record_id: r.recordId });
+                        r.savedToWardrobe = true;
+                        alert(`方案 #${index + 1} 已加入我的衣柜，可在顶部「我的衣柜」中查看与管理。`);
+                    } catch (e) {
+                        alert(e.response?.data?.error || '保存失败');
+                    }
+                };
+
+                return {
+                    BASE_URL,
+                    loggedIn, userRole, displayName, userId, authUsername, authPassword, authMode, authError,
+                    doLogin, doRegister, logout, openWardrobe, closeWardrobe, openHistory, closeHistory,
+                    openAdminUsers, closeAdminUsers, loadAdminUsers, changeUserRole, resetUserPassword, deleteUser,
+                    wardrobeOpen, wardrobeItems, wardrobeLoading,
+                    historyOpen, historyItems, historyLoading,
+                    adminOpen, adminItems, adminLoading, adminKeyword, filteredAdminItems, totalTryOnCount,
+                    absStatic, removeWardrobeItem, addHistoryToWardrobe,
+                    personFile, clothingFile, personImgPreview, clothingImgPreview,
+                    height, chest, waist, stylePref, promptText, autoRmbg,
+                    sizeRecommendation, isGenerating, results,
+                    handleFileChange, generateTryOn, saveToWardrobe
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
